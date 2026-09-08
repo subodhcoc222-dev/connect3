@@ -87,7 +87,6 @@ fun MainDashboardScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Master Switch
             MasterSwitchCard(
                 isOn = uiState.isMasterSwitchOn,
                 onToggle = { turnOn ->
@@ -103,14 +102,12 @@ fun MainDashboardScreen(
                 PausedBanner(pauseTimestamp = uiState.pauseUntilTimestamp)
             }
 
-            // Live Telemetry (Battery & Heartbeat Status)
             LiveTelemetryCard(
                 batteryLevel = uiState.batteryLevel,
                 isCharging = uiState.isCharging,
                 isHeartbeatAlive = uiState.isHeartbeatAlive
             )
 
-            // Inline Live Snapshot Card (Direct display below request button)
             InlineSnapshotCard(
                 base64String = uiState.latestSnapshotBase64,
                 latestSnapTime = uiState.latestSnapTime,
@@ -118,7 +115,6 @@ fun MainDashboardScreen(
                 onImageClick = { showSnapshotFullscreen = true }
             )
 
-            // 4 Silent Slots Card (PIN-Protected)
             QuietSlotsCard(
                 slots = uiState.quietSlots,
                 onSlotClick = { clickedSlot ->
@@ -128,20 +124,18 @@ fun MainDashboardScreen(
                 }
             )
 
-            // Event Log Navigation
             EventLogNavCard(onClick = onNavigateToEventLog)
 
-            // Snooze Settings Card
+            // Snooze Configuration Card with 30s option
             SnoozeConfigCard(
-                currentMinutes = uiState.snoozeMinutes,
-                onSelectMinutes = { mins ->
+                currentSeconds = uiState.snoozeSeconds,
+                onSelectSeconds = { secs ->
                     pinMode = PinMode.AUTHENTICATE
-                    onPinSuccessAction = { viewModel.updateSnoozeMinutes(mins) }
+                    onPinSuccessAction = { viewModel.updateSnoozeSeconds(secs) }
                     showPinSheet = true
                 }
             )
 
-            // Permissions Checklist
             PermissionSection(onPermissionsUpdated = { viewModel.loadLocalSettings() })
         }
     }
@@ -484,7 +478,15 @@ fun EventLogNavCard(onClick: () -> Unit) {
 }
 
 @Composable
-fun SnoozeConfigCard(currentMinutes: Int, onSelectMinutes: (Int) -> Unit) {
+fun SnoozeConfigCard(currentSeconds: Int, onSelectSeconds: (Int) -> Unit) {
+    val options = listOf(
+        30 to "30s",
+        60 to "1m",
+        120 to "2m",
+        180 to "3m",
+        300 to "5m"
+    )
+
     Card(
         colors = CardDefaults.cardColors(containerColor = SlateSurface),
         shape = RoundedCornerShape(16.dp),
@@ -497,17 +499,22 @@ fun SnoozeConfigCard(currentMinutes: Int, onSelectMinutes: (Int) -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                (1..5).forEach { min ->
-                    val isSelected = min == currentMinutes
+                options.forEach { (sec, label) ->
+                    val isSelected = sec == currentSeconds
                     Box(
                         modifier = Modifier
                             .size(48.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(if (isSelected) CyanAccent else SlateSurfaceLight)
-                            .clickable { onSelectMinutes(min) },
+                            .clickable { onSelectSeconds(sec) },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(text = "${min}m", color = if (isSelected) SlateDark else TextWhite, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = label,
+                            color = if (isSelected) SlateDark else TextWhite,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
                     }
                 }
             }
