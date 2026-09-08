@@ -7,6 +7,7 @@ import android.content.Intent
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.deskconnect.companion.data.local.PreferencesManager
 import com.deskconnect.companion.data.local.QuietSlot
 import com.deskconnect.companion.data.model.DailyEventPayload
@@ -14,9 +15,12 @@ import com.deskconnect.companion.receiver.AutoResumeReceiver
 import com.deskconnect.companion.service.DeskWatchdogService
 import com.google.firebase.database.*
 import com.google.gson.Gson
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 data class DashboardUiState(
     val isMasterSwitchOn: Boolean = false,
@@ -51,11 +55,13 @@ class MainViewModel(private val context: Context) : ViewModel() {
     companion object {
         const val PAIRED_DEVICE_ID = "349806"
         const val FIREBASE_RTDB_URL = "https://desk-sentry-default-rtdb.firebaseio.com/"
+        const val HEARTBEAT_TIMEOUT_MS = 15_000L
     }
 
     init {
         loadLocalSettings()
         initFirebase()
+        startLiveStatusTicker()
     }
 
     fun loadLocalSettings() {
@@ -76,10 +82,7 @@ class MainViewModel(private val context: Context) : ViewModel() {
 
             dbListener = object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
-                    if (!snapshot.exists()) {
-                        Log.e("DeskConnect", "Device node $PAIRED_DEVICE_ID does not exist!")
-                        return
-                    }
+                    if (!snapshot.exists()) return
 
                     val battery = snapshot.child("battery_level").getValue(Long::class.java)?.toInt()
                         ?: snapshot.child("battery_level").getValue(Int::class.java) ?: 0
@@ -101,7 +104,7 @@ class MainViewModel(private val context: Context) : ViewModel() {
                         rawEventsMap[dateKey] = jsonStr
                     }
 
-                    val isAlive = (System.currentTimeMillis() - heartbeat) < 60_000L
+                    val isAlive = (System.currentTimeMillis() - heartbeat) < HEARTBEAT_TIMEOUT_MS
 
                     _uiState.value = _uiState.value.copy(
                         batteryLevel = battery,
@@ -121,6 +124,20 @@ class MainViewModel(private val context: Context) : ViewModel() {
             dbRef?.addValueEventListener(dbListener!!)
         } catch (e: Exception) {
             Log.e("DeskConnect", "Failed to connect to Firebase", e)
+        }
+    }
+
+    // 1-Second active ticker: dynamically switches UI to DISCONNECTED if heartbeat stops
+    private fun startLiveStatusTicker() {
+        viewModelScope.launch {
+            while (isActive) {
+                delay(1000L)
+                val currentHeartbeat = _uiState.value.lastHeartbeatMs
+                val isAliveNow = currentHeartbeat > 0L && (System.currentTimeMillis() - currentHeartbeat < HEARTBEAT_TIMEOUT_MS)
+                if (_uiState.value.isHeartbeatAlive != isAliveNow) {
+                    _uiState.value = _uiState.value.copy(isHeartbeatAlive = isAliveNow)
+                }
+            }
         }
     }
 
@@ -178,6 +195,13 @@ class MainViewModel(private val context: Context) : ViewModel() {
 
     fun requestSnapshot() {
         dbRef?.child("commands")?.child("request_snap")?.setValue(true)
+    }
+
+    fun dismissAlarmManually() {
+        val intent = Intent(context, DeskWatchdogService::class.java).apply {
+            action = DeskWatchdogService.ACTION_MANUAL_DISMISS_ALARM
+        }
+        context.startService(intent)
     }
 
     fun loadEventDatePayload(date: String) {
