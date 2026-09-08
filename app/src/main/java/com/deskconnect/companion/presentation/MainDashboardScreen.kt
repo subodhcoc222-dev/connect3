@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -178,16 +179,24 @@ fun MasterSwitchCard(isOn: Boolean, onToggle: (Boolean) -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = SlateSurface),
         shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth().border(1.dp, if (isOn) CyanAccent else SlateBorder, RoundedCornerShape(16.dp))
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, if (isOn) CyanAccent else SlateBorder, RoundedCornerShape(16.dp))
     ) {
         Row(
-            modifier = Modifier.padding(20.dp).fillMaxWidth(),
+            modifier = Modifier
+                .padding(20.dp)
+                .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column {
                 Text(text = "MASTER SWITCH", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text(text = if (isOn) "Monitoring Active (24/7)" else "System Suspended", color = if (isOn) EmeraldPresent else TextMuted, fontSize = 13.sp)
+                Text(
+                    text = if (isOn) "Monitoring Active (24/7)" else "System Suspended",
+                    color = if (isOn) EmeraldPresent else TextMuted,
+                    fontSize = 13.sp
+                )
             }
             Switch(
                 checked = isOn,
@@ -224,7 +233,9 @@ fun LiveTelemetryCard(batteryLevel: Int, isCharging: Boolean, isHeartbeatAlive: 
     Card(
         colors = CardDefaults.cardColors(containerColor = SlateSurface),
         shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth().border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(text = "CAMERA TELEMETRY", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -255,7 +266,12 @@ fun LiveTelemetryCard(batteryLevel: Int, isCharging: Boolean, isHeartbeatAlive: 
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
-                        Text(text = if (isHeartbeatAlive) "ONLINE" else "DISCONNECTED", color = if (isHeartbeatAlive) EmeraldPresent else CrimsonAbsent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = if (isHeartbeatAlive) "ONLINE" else "DISCONNECTED",
+                            color = if (isHeartbeatAlive) EmeraldPresent else CrimsonAbsent,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                         Text(text = "Heartbeat Sync", color = TextMuted, fontSize = 11.sp)
                     }
                 }
@@ -269,10 +285,14 @@ fun SnapshotActionCard(latestSnapTime: Long, hasSnapshot: Boolean, onRequestSnap
     Card(
         colors = CardDefaults.cardColors(containerColor = SlateSurface),
         shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth().border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
     ) {
         Row(
-            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -323,7 +343,9 @@ fun SnoozeConfigCard(currentMinutes: Int, onSelectMinutes: (Int) -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = SlateSurface),
         shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth().border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(text = "SNOOZE LIMIT (PIN PROTECTED)", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
