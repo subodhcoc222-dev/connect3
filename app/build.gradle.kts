@@ -9,7 +9,8 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.deskconnect.companion"
+        // google-services.json के पैकेज "com.desk.sentry" से मैच करने के लिए सेट किया गया
+        applicationId = "com.desk.sentry"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
@@ -65,7 +66,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
-    // Firebase (Realtime Database & Storage)
+    // Firebase
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-database-ktx")
 
@@ -76,7 +77,7 @@ dependencies {
     // JSON Parsing (Firebase Events String parser)
     implementation("com.google.code.gson:gson:2.11.0")
 
-    // Encrypted Preferences (Secure Master PIN Storage)
+    // Encrypted Preferences (Master PIN)
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // UI Tools
