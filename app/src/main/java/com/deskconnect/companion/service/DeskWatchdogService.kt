@@ -32,7 +32,6 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
     private var databaseRef: DatabaseReference? = null
     private var firebaseListener: ValueEventListener? = null
 
-    // State Tracking
     private var lastRecordedHeartbeat: Long = 0L
     private var lastLocalHeartbeatUpdate: Long = 0L
     private var isHeartbeatMissAlerted = false
@@ -48,8 +47,9 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_STOP_WATCHDOG = "action_stop_watchdog"
         const val ACTION_SNOOZE_ALARM = "action_snooze_alarm"
         const val NOTIFICATION_ID = 1001
-        const val HEARTBEAT_TIMEOUT_MS = 15_000L // 15 seconds
-        const val GRACE_PERIOD_MS = 120_000L     // 2 minutes
+        const val HEARTBEAT_TIMEOUT_MS = 15_000L
+        const val GRACE_PERIOD_MS = 120_000L
+        const val FIREBASE_RTDB_URL = "https://desk-sentry-default-rtdb.firebaseio.com/"
     }
 
     override fun onCreate() {
@@ -83,14 +83,14 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
             stopSelf()
             return
         }
-
         connectFirebase()
         startWatchdogTicker()
     }
 
     private fun connectFirebase() {
-        val deviceId = prefs.pairedDeviceId
-        databaseRef = FirebaseDatabase.getInstance().getReference("desk_sentry").child(deviceId)
+        val deviceId = prefs.pairedDeviceId.ifEmpty { "349806" }
+        val database = FirebaseDatabase.getInstance(FIREBASE_RTDB_URL)
+        databaseRef = database.getReference("desk_sentry").child(deviceId)
 
         firebaseListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
@@ -99,19 +99,17 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
             }
 
             override fun onCancelled(error: DatabaseError) {
-                Log.e("DeskWatchdog", "Firebase onCancelled: ${error.message}")
+                Log.e("DeskWatchdog", "Firebase error: ${error.message}")
             }
         }
         databaseRef?.addValueEventListener(firebaseListener!!)
     }
 
     private fun handleFirebaseTelemetry(data: DeskSentryDevice) {
-        // Update Heartbeat
         if (data.lastHeartbeat != lastRecordedHeartbeat) {
             lastRecordedHeartbeat = data.lastHeartbeat
             lastLocalHeartbeatUpdate = System.currentTimeMillis()
 
-            // Connection restored
             if (isHeartbeatMissAlerted) {
                 isHeartbeatMissAlerted = false
                 heartbeatMissStartTime = 0L
@@ -124,7 +122,6 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
 
         isAlarmActiveOnFirebase = data.alarmActive
 
-        // Trigger alarm if true on Firebase, unless snoozed or quiet hours
         if (isAlarmActiveOnFirebase) {
             evaluateAndTriggerAlarm(reason = "DESK_ALARM")
         } else {
@@ -140,13 +137,11 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
                 delay(1000L)
                 val now = System.currentTimeMillis()
 
-                // Check Master Switch Auto-Resume expiration if paused
                 if (!prefs.isMasterSwitchOn) {
                     stopSelf()
                     break
                 }
 
-                // Check Snooze Expiration
                 if (isSnoozed && now >= snoozeEndTime) {
                     isSnoozed = false
                     if (isAlarmActiveOnFirebase || isFailSafeAlarmTriggered) {
@@ -154,7 +149,6 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
 
-                // Check Heartbeat Miss (> 15 seconds)
                 if (lastLocalHeartbeatUpdate > 0L) {
                     val diff = now - lastLocalHeartbeatUpdate
                     if (diff > HEARTBEAT_TIMEOUT_MS) {
@@ -164,7 +158,6 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
                             speakTtsAlert("Firebase disconnected. Please connect to Firebase.")
                         }
 
-                        // Check 2-Minute Grace Period
                         val graceDiff = now - heartbeatMissStartTime
                         if (graceDiff >= GRACE_PERIOD_MS && !isFailSafeAlarmTriggered) {
                             isFailSafeAlarmTriggered = true
@@ -177,20 +170,16 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun evaluateAndTriggerAlarm(reason: String) {
-        // Verify Quiet Hours
         val quietSlots = prefs.getQuietSlots()
         if (QuietSlotChecker.isCurrentTimeInQuietSlot(quietSlots)) {
-            Log.d("DeskWatchdog", "Alarm suppressed by Quiet Slot.")
             stopAlarm()
             return
         }
 
         if (isSnoozed) return
 
-        // Start Loud Alarm Sound
         audioPlayer.play()
 
-        // Launch Alarm Full-screen Overlay
         val overlayIntent = Intent(this, AlarmOverlayActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra("EXTRA_ALARM_REASON", reason)
@@ -225,7 +214,7 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
     private fun acquireWakeLock() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DeskConnect::WatchdogWakeLock").apply {
-            acquire(24 * 60 * 60 * 1000L) // 24 hours
+            acquire(24 * 60 * 60 * 1000L)
         }
     }
 
