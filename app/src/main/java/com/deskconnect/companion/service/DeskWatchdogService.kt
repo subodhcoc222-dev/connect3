@@ -154,7 +154,10 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
                         if (!isHeartbeatMissAlerted) {
                             isHeartbeatMissAlerted = true
                             heartbeatMissStartTime = now
-                            speakTtsAlert("Firebase disconnected. Please connect to Firebase.")
+                            // Silent slot check before speaking TTS
+                            if (!QuietSlotChecker.isCurrentTimeInQuietSlot(prefs.getQuietSlots())) {
+                                speakTtsAlert("Firebase disconnected. Please connect to Firebase.")
+                            }
                         }
 
                         val graceDiff = now - heartbeatMissStartTime
@@ -171,6 +174,7 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
     private fun evaluateAndTriggerAlarm(reason: String) {
         val quietSlots = prefs.getQuietSlots()
         if (QuietSlotChecker.isCurrentTimeInQuietSlot(quietSlots)) {
+            Log.d("DeskWatchdog", "Muted by Active Quiet Slot.")
             stopAlarm()
             return
         }
