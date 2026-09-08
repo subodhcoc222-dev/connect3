@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">DeskConnect Companion</string>
+    <string name="device_admin_label">DeskConnect Security Protection</string>
+    <string name="device_admin_description">Protects DeskConnect Companion from unauthorized uninstallation and enforces study integrity.</string>
+</resources>
