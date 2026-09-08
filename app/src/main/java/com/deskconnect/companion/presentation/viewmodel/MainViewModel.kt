@@ -36,7 +36,7 @@ data class DashboardUiState(
     val isRequestingSnap: Boolean = false,
     val availableDates: List<String> = emptyList(),
     val selectedDatePayload: DailyEventPayload? = null,
-    val snoozeMinutes: Int = 1,
+    val snoozeSeconds: Int = 60,
     val quietSlots: List<QuietSlot> = emptyList()
 )
 
@@ -69,7 +69,7 @@ class MainViewModel(private val context: Context) : ViewModel() {
             isMasterSwitchOn = prefs.isMasterSwitchOn,
             isPinSet = prefs.isPinSet(),
             pairedDeviceId = PAIRED_DEVICE_ID,
-            snoozeMinutes = prefs.snoozeMinutes,
+            snoozeSeconds = prefs.snoozeSeconds,
             pauseUntilTimestamp = prefs.pauseUntilTimestamp,
             quietSlots = prefs.getQuietSlots()
         )
@@ -127,7 +127,6 @@ class MainViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    // 1-Second active ticker: dynamically switches UI to DISCONNECTED if heartbeat stops
     private fun startLiveStatusTicker() {
         viewModelScope.launch {
             while (isActive) {
@@ -197,13 +196,6 @@ class MainViewModel(private val context: Context) : ViewModel() {
         dbRef?.child("commands")?.child("request_snap")?.setValue(true)
     }
 
-    fun dismissAlarmManually() {
-        val intent = Intent(context, DeskWatchdogService::class.java).apply {
-            action = DeskWatchdogService.ACTION_MANUAL_DISMISS_ALARM
-        }
-        context.startService(intent)
-    }
-
     fun loadEventDatePayload(date: String) {
         val rawJson = rawEventsMap[date] ?: return
         try {
@@ -214,8 +206,8 @@ class MainViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    fun updateSnoozeMinutes(minutes: Int) {
-        prefs.snoozeMinutes = minutes
+    fun updateSnoozeSeconds(seconds: Int) {
+        prefs.snoozeSeconds = seconds
         loadLocalSettings()
     }
 
