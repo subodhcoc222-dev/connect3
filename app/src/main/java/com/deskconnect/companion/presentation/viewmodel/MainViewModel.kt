@@ -81,7 +81,6 @@ class MainViewModel(private val context: Context) : ViewModel() {
                         return
                     }
 
-                    // Direct safe field parsing (bypasses reflection issues)
                     val battery = snapshot.child("battery_level").getValue(Long::class.java)?.toInt()
                         ?: snapshot.child("battery_level").getValue(Int::class.java) ?: 0
 
@@ -90,13 +89,11 @@ class MainViewModel(private val context: Context) : ViewModel() {
                     val snapBase64 = snapshot.child("latest_snapshot_base64").getValue(String::class.java)
                     val snapTime = snapshot.child("latest_snap_time").getValue(Long::class.java) ?: 0L
 
-                    // Parse available dates list
                     val dates = mutableListOf<String>()
                     snapshot.child("available_dates").children.forEach { child ->
                         child.getValue(String::class.java)?.let { dates.add(it) }
                     }
 
-                    // Cache stringified event logs
                     rawEventsMap.clear()
                     snapshot.child("events").children.forEach { child ->
                         val dateKey = child.key ?: return@forEach
@@ -195,6 +192,11 @@ class MainViewModel(private val context: Context) : ViewModel() {
 
     fun updateSnoozeMinutes(minutes: Int) {
         prefs.snoozeMinutes = minutes
+        loadLocalSettings()
+    }
+
+    fun updateQuietSlots(slots: List<QuietSlot>) {
+        prefs.saveQuietSlots(slots)
         loadLocalSettings()
     }
 
