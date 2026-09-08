@@ -13,7 +13,6 @@ import androidx.core.app.NotificationCompat
 import com.deskconnect.companion.DeskConnectApp
 import com.deskconnect.companion.R
 import com.deskconnect.companion.data.local.PreferencesManager
-import com.deskconnect.companion.data.model.DeskSentryDevice
 import com.deskconnect.companion.presentation.MainActivity
 import com.deskconnect.companion.presentation.alarm.AlarmOverlayActivity
 import com.google.firebase.database.*
@@ -49,6 +48,7 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
         const val NOTIFICATION_ID = 1001
         const val HEARTBEAT_TIMEOUT_MS = 15_000L
         const val GRACE_PERIOD_MS = 120_000L
+        const val PAIRED_DEVICE_ID = "349806"
         const val FIREBASE_RTDB_URL = "https://desk-sentry-default-rtdb.firebaseio.com/"
     }
 
@@ -88,14 +88,39 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun connectFirebase() {
-        val deviceId = prefs.pairedDeviceId.ifEmpty { "349806" }
         val database = FirebaseDatabase.getInstance(FIREBASE_RTDB_URL)
-        databaseRef = database.getReference("desk_sentry").child(deviceId)
+        databaseRef = database.getReference("desk_sentry").child(PAIRED_DEVICE_ID)
 
         firebaseListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                val deviceData = snapshot.getValue(DeskSentryDevice::class.java) ?: return
-                handleFirebaseTelemetry(deviceData)
+                if (!snapshot.exists()) return
+
+                val heartbeat = snapshot.child("last_heartbeat").getValue(Long::class.java) ?: 0L
+                val alarmActive = snapshot.child("alarm_active").getValue(Boolean::class.java) ?: false
+
+                if (heartbeat != lastRecordedHeartbeat) {
+                    lastRecordedHeartbeat = heartbeat
+                    lastLocalHeartbeatUpdate = System.currentTimeMillis()
+
+                    if (isHeartbeatMissAlerted) {
+                        isHeartbeatMissAlerted = false
+                        heartbeatMissStartTime = 0L
+                        if (isFailSafeAlarmTriggered) {
+                            isFailSafeAlarmTriggered = false
+                            stopAlarm()
+                        }
+                    }
+                }
+
+                isAlarmActiveOnFirebase = alarmActive
+
+                if (isAlarmActiveOnFirebase) {
+                    evaluateAndTriggerAlarm(reason = "DESK_ALARM")
+                } else {
+                    if (!isFailSafeAlarmTriggered) {
+                        stopAlarm()
+                    }
+                }
             }
 
             override fun onCancelled(error: DatabaseError) {
@@ -103,32 +128,6 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
             }
         }
         databaseRef?.addValueEventListener(firebaseListener!!)
-    }
-
-    private fun handleFirebaseTelemetry(data: DeskSentryDevice) {
-        if (data.lastHeartbeat != lastRecordedHeartbeat) {
-            lastRecordedHeartbeat = data.lastHeartbeat
-            lastLocalHeartbeatUpdate = System.currentTimeMillis()
-
-            if (isHeartbeatMissAlerted) {
-                isHeartbeatMissAlerted = false
-                heartbeatMissStartTime = 0L
-                if (isFailSafeAlarmTriggered) {
-                    isFailSafeAlarmTriggered = false
-                    stopAlarm()
-                }
-            }
-        }
-
-        isAlarmActiveOnFirebase = data.alarmActive
-
-        if (isAlarmActiveOnFirebase) {
-            evaluateAndTriggerAlarm(reason = "DESK_ALARM")
-        } else {
-            if (!isFailSafeAlarmTriggered) {
-                stopAlarm()
-            }
-        }
     }
 
     private fun startWatchdogTicker() {
