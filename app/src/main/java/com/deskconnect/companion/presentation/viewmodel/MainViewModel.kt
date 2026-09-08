@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import com.deskconnect.companion.data.local.PreferencesManager
 import com.deskconnect.companion.data.local.QuietSlot
 import com.deskconnect.companion.data.model.DailyEventPayload
@@ -18,7 +17,6 @@ import com.google.gson.Gson
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 
 data class DashboardUiState(
     val isMasterSwitchOn: Boolean = false,
@@ -50,6 +48,10 @@ class MainViewModel(private val context: Context) : ViewModel() {
     private var dbListener: ValueEventListener? = null
     private var currentLoadedDeviceData: DeskSentryDevice? = null
 
+    companion object {
+        const val FIREBASE_RTDB_URL = "https://desk-sentry-default-rtdb.firebaseio.com/"
+    }
+
     init {
         loadLocalSettings()
         initFirebase()
@@ -59,7 +61,7 @@ class MainViewModel(private val context: Context) : ViewModel() {
         _uiState.value = _uiState.value.copy(
             isMasterSwitchOn = prefs.isMasterSwitchOn,
             isPinSet = prefs.isPinSet(),
-            pairedDeviceId = prefs.pairedDeviceId,
+            pairedDeviceId = prefs.pairedDeviceId.ifEmpty { "349806" },
             snoozeMinutes = prefs.snoozeMinutes,
             pauseUntilTimestamp = prefs.pauseUntilTimestamp,
             quietSlots = prefs.getQuietSlots()
@@ -67,8 +69,9 @@ class MainViewModel(private val context: Context) : ViewModel() {
     }
 
     private fun initFirebase() {
-        val deviceId = prefs.pairedDeviceId
-        dbRef = FirebaseDatabase.getInstance().getReference("desk_sentry").child(deviceId)
+        val deviceId = prefs.pairedDeviceId.ifEmpty { "349806" }
+        val database = FirebaseDatabase.getInstance(FIREBASE_RTDB_URL)
+        dbRef = database.getReference("desk_sentry").child(deviceId)
 
         dbListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
@@ -161,11 +164,6 @@ class MainViewModel(private val context: Context) : ViewModel() {
 
     fun updateSnoozeMinutes(minutes: Int) {
         prefs.snoozeMinutes = minutes
-        loadLocalSettings()
-    }
-
-    fun updateQuietSlots(slots: List<QuietSlot>) {
-        prefs.saveQuietSlots(slots)
         loadLocalSettings()
     }
 
