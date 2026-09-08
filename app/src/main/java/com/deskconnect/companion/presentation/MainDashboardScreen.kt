@@ -1,5 +1,9 @@
 package com.deskconnect.companion.presentation
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Base64
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,6 +20,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,7 +44,7 @@ fun MainDashboardScreen(
     var onPinSuccessAction by remember { mutableStateOf<() -> Unit>({}) }
 
     var showPauseDialog by remember { mutableStateOf(false) }
-    var showSnapshotViewer by remember { mutableStateOf(false) }
+    var showSnapshotFullscreen by remember { mutableStateOf(false) }
     var slotToEdit by remember { mutableStateOf<QuietSlot?>(null) }
 
     LaunchedEffect(uiState.isPinSet) {
@@ -97,15 +103,22 @@ fun MainDashboardScreen(
                 PausedBanner(pauseTimestamp = uiState.pauseUntilTimestamp)
             }
 
-            // Live Telemetry
+            // Live Telemetry (Battery & Heartbeat Status)
             LiveTelemetryCard(
                 batteryLevel = uiState.batteryLevel,
                 isCharging = uiState.isCharging,
-                isHeartbeatAlive = uiState.isHeartbeatAlive,
-                lastHeartbeatMs = uiState.lastHeartbeatMs
+                isHeartbeatAlive = uiState.isHeartbeatAlive
             )
 
-            // 4 Silent / Quiet Slots Card (PIN-Protected)
+            // Inline Live Snapshot Card (Direct display below request button)
+            InlineSnapshotCard(
+                base64String = uiState.latestSnapshotBase64,
+                latestSnapTime = uiState.latestSnapTime,
+                onRequestSnap = { viewModel.requestSnapshot() },
+                onImageClick = { showSnapshotFullscreen = true }
+            )
+
+            // 4 Silent Slots Card (PIN-Protected)
             QuietSlotsCard(
                 slots = uiState.quietSlots,
                 onSlotClick = { clickedSlot ->
@@ -113,14 +126,6 @@ fun MainDashboardScreen(
                     onPinSuccessAction = { slotToEdit = clickedSlot }
                     showPinSheet = true
                 }
-            )
-
-            // Remote Snapshot Card
-            SnapshotActionCard(
-                latestSnapTime = uiState.latestSnapTime,
-                hasSnapshot = uiState.latestSnapshotBase64 != null,
-                onRequestSnap = { viewModel.requestSnapshot() },
-                onViewSnap = { showSnapshotViewer = true }
             )
 
             // Event Log Navigation
@@ -136,7 +141,7 @@ fun MainDashboardScreen(
                 }
             )
 
-            // Permission Section
+            // Permissions Checklist
             PermissionSection(onPermissionsUpdated = { viewModel.loadLocalSettings() })
         }
     }
@@ -184,12 +189,212 @@ fun MainDashboardScreen(
         )
     }
 
-    if (showSnapshotViewer && uiState.latestSnapshotBase64 != null) {
+    if (showSnapshotFullscreen && uiState.latestSnapshotBase64 != null) {
         SnapshotDialog(
             base64String = uiState.latestSnapshotBase64!!,
             snapTimeMs = uiState.latestSnapTime,
-            onDismiss = { showSnapshotViewer = false }
+            onDismiss = { showSnapshotFullscreen = false }
         )
+    }
+}
+
+@Composable
+fun InlineSnapshotCard(
+    base64String: String?,
+    latestSnapTime: Long,
+    onRequestSnap: () -> Unit,
+    onImageClick: () -> Unit
+) {
+    val bitmap: Bitmap? = remember(base64String) {
+        if (base64String.isNullOrEmpty()) null
+        else {
+            try {
+                val cleanBase64 = base64String.substringAfter(",")
+                val decodedBytes = Base64.decode(cleanBase64, Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    val timeFormatted = remember(latestSnapTime) {
+        if (latestSnapTime > 0) SimpleDateFormat("hh:mm:ss a", Locale.getDefault()).format(Date(latestSnapTime))
+        else "No capture yet"
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SlateSurface),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(text = "DESK LIVE SNAPSHOT", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(text = "Last: $timeFormatted", color = TextMuted, fontSize = 11.sp)
+                }
+
+                Button(
+                    onClick = onRequestSnap,
+                    colors = ButtonDefaults.buttonColors(containerColor = CyanAccent),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.CameraAlt, contentDescription = null, tint = SlateDark, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Request Snap", color = SlateDark, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (bitmap != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(SlateDark)
+                        .clickable { onImageClick() },
+                    contentAlignment = Alignment.BottomEnd
+                ) {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "Desk Snapshot",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Box(
+                        modifier = Modifier
+                            .padding(8.dp)
+                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(text = "Tap to enlarge", color = Color.White, fontSize = 10.sp)
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(SlateSurfaceLight),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(text = "No snapshot recorded yet. Tap 'Request Snap'", color = TextMuted, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LiveTelemetryCard(batteryLevel: Int, isCharging: Boolean, isHeartbeatAlive: Boolean) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SlateSurface),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth().border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(text = "CAMERA TELEMETRY", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (isCharging) Icons.Default.BatteryChargingFull else Icons.Default.BatteryFull,
+                        contentDescription = null,
+                        tint = if (batteryLevel > 20) EmeraldPresent else CrimsonAbsent,
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(text = "$batteryLevel%", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text(text = if (isCharging) "Charging (Plugged)" else "On Battery", color = TextMuted, fontSize = 11.sp)
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clip(CircleShape)
+                            .background(if (isHeartbeatAlive) EmeraldPresent else CrimsonAbsent)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = if (isHeartbeatAlive) "ONLINE" else "DISCONNECTED",
+                            color = if (isHeartbeatAlive) EmeraldPresent else CrimsonAbsent,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(text = if (isHeartbeatAlive) "Heartbeat Active" else "Heartbeat Lost", color = TextMuted, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MasterSwitchCard(isOn: Boolean, onToggle: (Boolean) -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SlateSurface),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, if (isOn) CyanAccent else SlateBorder, RoundedCornerShape(16.dp))
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(20.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(text = "MASTER SWITCH", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    text = if (isOn) "Monitoring Active (24/7)" else "System Suspended",
+                    color = if (isOn) EmeraldPresent else TextMuted,
+                    fontSize = 13.sp
+                )
+            }
+            Switch(
+                checked = isOn,
+                onCheckedChange = { onToggle(it) },
+                colors = SwitchDefaults.colors(checkedThumbColor = SlateDark, checkedTrackColor = CyanAccent)
+            )
+        }
+    }
+}
+
+@Composable
+fun PausedBanner(pauseTimestamp: Long) {
+    val formatted = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(pauseTimestamp))
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0x22F59E0B), RoundedCornerShape(12.dp))
+            .border(1.dp, AmberBreak, RoundedCornerShape(12.dp))
+            .padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(imageVector = Icons.Default.HourglassBottom, contentDescription = null, tint = AmberBreak)
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(text = "MONITORING PAUSED", color = AmberBreak, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text(text = "Auto-resumes on: $formatted", color = TextWhite, fontSize = 12.sp)
+            }
+        }
     }
 }
 
@@ -255,144 +460,6 @@ fun QuietSlotsCard(slots: List<QuietSlot>, onSlotClick: (QuietSlot) -> Unit) {
 }
 
 @Composable
-fun MasterSwitchCard(isOn: Boolean, onToggle: (Boolean) -> Unit) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = SlateSurface),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, if (isOn) CyanAccent else SlateBorder, RoundedCornerShape(16.dp))
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(20.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column {
-                Text(text = "MASTER SWITCH", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text(
-                    text = if (isOn) "Monitoring Active (24/7)" else "System Suspended",
-                    color = if (isOn) EmeraldPresent else TextMuted,
-                    fontSize = 13.sp
-                )
-            }
-            Switch(
-                checked = isOn,
-                onCheckedChange = { onToggle(it) },
-                colors = SwitchDefaults.colors(checkedThumbColor = SlateDark, checkedTrackColor = CyanAccent)
-            )
-        }
-    }
-}
-
-@Composable
-fun PausedBanner(pauseTimestamp: Long) {
-    val formatted = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(pauseTimestamp))
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0x22F59E0B), RoundedCornerShape(12.dp))
-            .border(1.dp, AmberBreak, RoundedCornerShape(12.dp))
-            .padding(16.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(imageVector = Icons.Default.HourglassBottom, contentDescription = null, tint = AmberBreak)
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
-                Text(text = "MONITORING PAUSED", color = AmberBreak, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Text(text = "Auto-resumes on: $formatted", color = TextWhite, fontSize = 12.sp)
-            }
-        }
-    }
-}
-
-@Composable
-fun LiveTelemetryCard(batteryLevel: Int, isCharging: Boolean, isHeartbeatAlive: Boolean, lastHeartbeatMs: Long) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = SlateSurface),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = "CAMERA TELEMETRY", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = if (isCharging) Icons.Default.BatteryChargingFull else Icons.Default.BatteryFull,
-                        contentDescription = null,
-                        tint = if (batteryLevel > 20) EmeraldPresent else CrimsonAbsent,
-                        modifier = Modifier.size(32.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column {
-                        Text(text = "$batteryLevel%", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        Text(text = if (isCharging) "Charging (Plugged)" else "On Battery", color = TextMuted, fontSize = 11.sp)
-                    }
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(14.dp)
-                            .clip(CircleShape)
-                            .background(if (isHeartbeatAlive) EmeraldPresent else CrimsonAbsent)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column {
-                        Text(
-                            text = if (isHeartbeatAlive) "ONLINE" else "DISCONNECTED",
-                            color = if (isHeartbeatAlive) EmeraldPresent else CrimsonAbsent,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(text = "Heartbeat Sync", color = TextMuted, fontSize = 11.sp)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun SnapshotActionCard(latestSnapTime: Long, hasSnapshot: Boolean, onRequestSnap: () -> Unit, onViewSnap: () -> Unit) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = SlateSurface),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = "DESK SNAPSHOT", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Text(text = if (hasSnapshot) "Tap View to inspect photo" else "No image recorded yet", color = TextMuted, fontSize = 12.sp)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (hasSnapshot) {
-                    OutlinedButton(onClick = onViewSnap, shape = RoundedCornerShape(8.dp)) {
-                        Text(text = "View", color = CyanAccent)
-                    }
-                }
-                Button(onClick = onRequestSnap, colors = ButtonDefaults.buttonColors(containerColor = CyanAccent), shape = RoundedCornerShape(8.dp)) {
-                    Text(text = "Request", color = SlateDark, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun EventLogNavCard(onClick: () -> Unit) {
     Row(
         modifier = Modifier
@@ -421,9 +488,7 @@ fun SnoozeConfigCard(currentMinutes: Int, onSelectMinutes: (Int) -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = SlateSurface),
         shape = RoundedCornerShape(16.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
+        modifier = Modifier.fillMaxWidth().border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(text = "SNOOZE LIMIT (PIN PROTECTED)", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
