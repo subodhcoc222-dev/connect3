@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.deskconnect.companion.data.local.QuietSlot
 import com.deskconnect.companion.presentation.components.*
 import com.deskconnect.companion.presentation.theme.*
 import com.deskconnect.companion.presentation.viewmodel.MainViewModel
@@ -38,8 +39,8 @@ fun MainDashboardScreen(
 
     var showPauseDialog by remember { mutableStateOf(false) }
     var showSnapshotViewer by remember { mutableStateOf(false) }
+    var slotToEdit by remember { mutableStateOf<QuietSlot?>(null) }
 
-    // First time PIN setup prompt
     LaunchedEffect(uiState.isPinSet) {
         if (!uiState.isPinSet) {
             pinMode = PinMode.SETUP_NEW
@@ -80,33 +81,38 @@ fun MainDashboardScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Master Switch Card
+            // Master Switch
             MasterSwitchCard(
                 isOn = uiState.isMasterSwitchOn,
                 onToggle = { turnOn ->
-                    if (turnOn) {
-                        pinMode = PinMode.AUTHENTICATE
-                        onPinSuccessAction = { viewModel.toggleMasterSwitch(true) }
-                        showPinSheet = true
-                    } else {
-                        pinMode = PinMode.AUTHENTICATE
-                        onPinSuccessAction = { showPauseDialog = true }
-                        showPinSheet = true
+                    pinMode = PinMode.AUTHENTICATE
+                    onPinSuccessAction = {
+                        if (turnOn) viewModel.toggleMasterSwitch(true) else showPauseDialog = true
                     }
+                    showPinSheet = true
                 }
             )
 
-            // Paused State Card (If applicable)
             if (!uiState.isMasterSwitchOn && uiState.pauseUntilTimestamp > 0L) {
                 PausedBanner(pauseTimestamp = uiState.pauseUntilTimestamp)
             }
 
-            // Live Telemetry Hub (Battery & Heartbeat)
+            // Live Telemetry
             LiveTelemetryCard(
                 batteryLevel = uiState.batteryLevel,
                 isCharging = uiState.isCharging,
                 isHeartbeatAlive = uiState.isHeartbeatAlive,
                 lastHeartbeatMs = uiState.lastHeartbeatMs
+            )
+
+            // 4 Silent / Quiet Slots Card (PIN-Protected)
+            QuietSlotsCard(
+                slots = uiState.quietSlots,
+                onSlotClick = { clickedSlot ->
+                    pinMode = PinMode.AUTHENTICATE
+                    onPinSuccessAction = { slotToEdit = clickedSlot }
+                    showPinSheet = true
+                }
             )
 
             // Remote Snapshot Card
@@ -117,10 +123,10 @@ fun MainDashboardScreen(
                 onViewSnap = { showSnapshotViewer = true }
             )
 
-            // Event Log Navigation Button
+            // Event Log Navigation
             EventLogNavCard(onClick = onNavigateToEventLog)
 
-            // Snooze Configuration Card
+            // Snooze Settings Card
             SnoozeConfigCard(
                 currentMinutes = uiState.snoozeMinutes,
                 onSelectMinutes = { mins ->
@@ -130,12 +136,11 @@ fun MainDashboardScreen(
                 }
             )
 
-            // Permissions Checklist (Auto-Hiding)
+            // Permission Section
             PermissionSection(onPermissionsUpdated = { viewModel.loadLocalSettings() })
         }
     }
 
-    // PIN BottomSheet Modal
     if (showPinSheet) {
         PinBottomSheet(
             mode = pinMode,
@@ -149,7 +154,6 @@ fun MainDashboardScreen(
         )
     }
 
-    // Smart Pause Dialog
     if (showPauseDialog) {
         PauseDurationDialog(
             onDismiss = { showPauseDialog = false },
@@ -164,13 +168,89 @@ fun MainDashboardScreen(
         )
     }
 
-    // Base64 Snapshot Viewer Dialog
+    if (slotToEdit != null) {
+        QuietSlotEditDialog(
+            slot = slotToEdit!!,
+            onDismiss = { slotToEdit = null },
+            onSave = { updatedSlot ->
+                val currentSlots = uiState.quietSlots.toMutableList()
+                val idx = currentSlots.indexOfFirst { it.id == updatedSlot.id }
+                if (idx != -1) {
+                    currentSlots[idx] = updatedSlot
+                    viewModel.updateQuietSlots(currentSlots)
+                }
+                slotToEdit = null
+            }
+        )
+    }
+
     if (showSnapshotViewer && uiState.latestSnapshotBase64 != null) {
         SnapshotDialog(
             base64String = uiState.latestSnapshotBase64!!,
             snapTimeMs = uiState.latestSnapTime,
             onDismiss = { showSnapshotViewer = false }
         )
+    }
+}
+
+@Composable
+fun QuietSlotsCard(slots: List<QuietSlot>, onSlotClick: (QuietSlot) -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SlateSurface),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("4 SILENT SLOTS (AUTO-MUTE)", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("Tap to edit (PIN)", color = CyanAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            slots.forEach { slot ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SlateSurfaceLight)
+                        .clickable { onSlotClick(slot) }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(if (slot.isEnabled) EmeraldPresent else TextMuted)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(text = "Slot ${slot.id}:", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "${formatTime12H(slot.startHour, slot.startMinute)} - ${formatTime12H(slot.endHour, slot.endMinute)}",
+                            color = if (slot.isEnabled) TextWhite else TextMuted,
+                            fontSize = 13.sp
+                        )
+                    }
+                    Text(
+                        text = if (slot.isEnabled) "ACTIVE" else "OFF",
+                        color = if (slot.isEnabled) EmeraldPresent else TextMuted,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -241,7 +321,6 @@ fun LiveTelemetryCard(batteryLevel: Int, isCharging: Boolean, isHeartbeatAlive: 
             Text(text = "CAMERA TELEMETRY", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(12.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                // Battery Metric
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = if (isCharging) Icons.Default.BatteryChargingFull else Icons.Default.BatteryFull,
@@ -256,7 +335,6 @@ fun LiveTelemetryCard(batteryLevel: Int, isCharging: Boolean, isHeartbeatAlive: 
                     }
                 }
 
-                // Heartbeat Metric
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
@@ -331,7 +409,7 @@ fun EventLogNavCard(onClick: () -> Unit) {
             Spacer(modifier = Modifier.width(16.dp))
             Column {
                 Text(text = "Study Event Logs", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Text(text = "View slot charts & presence breakdown", color = TextMuted, fontSize = 12.sp)
+                Text(text = "All-day reports & presence breakdown", color = TextMuted, fontSize = 12.sp)
             }
         }
         Icon(imageVector = Icons.Default.ChevronRight, contentDescription = null, tint = TextMuted)
