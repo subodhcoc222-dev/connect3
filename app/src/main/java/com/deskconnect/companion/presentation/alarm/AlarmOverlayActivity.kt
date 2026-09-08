@@ -1,8 +1,10 @@
 package com.deskconnect.companion.presentation.alarm
 
 import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -14,6 +16,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,25 +28,56 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.deskconnect.companion.data.local.PreferencesManager
+import com.deskconnect.companion.presentation.components.PinBottomSheet
+import com.deskconnect.companion.presentation.components.PinMode
 import com.deskconnect.companion.service.DeskWatchdogService
 
 class AlarmOverlayActivity : ComponentActivity() {
+
+    private val dismissReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == DeskWatchdogService.ACTION_DISMISS_OVERLAY) {
+                finish()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureWindowBypass()
 
+        val filter = IntentFilter(DeskWatchdogService.ACTION_DISMISS_OVERLAY)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(dismissReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(dismissReceiver, filter)
+        }
+
         val reason = intent.getStringExtra("EXTRA_ALARM_REASON") ?: "DESK_ALARM"
         val prefs = PreferencesManager(this)
 
         setContent {
+            var showPinDialog by remember { mutableStateOf(false) }
+
             AlarmOverlayScreen(
                 reason = reason,
                 snoozeMinutes = prefs.snoozeMinutes,
-                onSnoozeClicked = {
-                    triggerSnooze()
-                }
+                onSnoozeClicked = { triggerSnooze() },
+                onDismissClicked = { showPinDialog = true }
             )
+
+            if (showPinDialog) {
+                PinBottomSheet(
+                    mode = PinMode.AUTHENTICATE,
+                    onDismiss = { showPinDialog = false },
+                    onPinSuccess = {
+                        showPinDialog = false
+                        triggerManualDismiss()
+                    },
+                    verifyOldPin = { prefs.verifyPin(it) },
+                    saveNewPin = {}
+                )
+            }
         }
     }
 
@@ -72,9 +106,24 @@ class AlarmOverlayActivity : ComponentActivity() {
         finish()
     }
 
-    @Deprecated("Prevent accidental back dismiss during critical alarm")
+    private fun triggerManualDismiss() {
+        val dismissIntent = Intent(this, DeskWatchdogService::class.java).apply {
+            action = DeskWatchdogService.ACTION_MANUAL_DISMISS_ALARM
+        }
+        startService(dismissIntent)
+        finish()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            unregisterReceiver(dismissReceiver)
+        } catch (_: Exception) {}
+    }
+
+    @Deprecated("Prevent accidental back dismiss")
     override fun onBackPressed() {
-        // Back press disabled to prevent bypass
+        // Disabled to prevent unauthorized dismissal
     }
 }
 
@@ -82,7 +131,8 @@ class AlarmOverlayActivity : ComponentActivity() {
 fun AlarmOverlayScreen(
     reason: String,
     snoozeMinutes: Int,
-    onSnoozeClicked: () -> Unit
+    onSnoozeClicked: () -> Unit,
+    onDismissClicked: () -> Unit
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val bgColor by infiniteTransition.animateColor(
@@ -112,10 +162,10 @@ fun AlarmOverlayScreen(
                 imageVector = Icons.Default.Warning,
                 contentDescription = "Alert",
                 tint = Color.White,
-                modifier = Modifier.size(96.dp)
+                modifier = Modifier.size(80.dp)
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             Text(
                 text = "DESK VIOLATION DETECTED",
@@ -133,24 +183,45 @@ fun AlarmOverlayScreen(
                 else
                     "Absence threshold exceeded on camera device!",
                 color = Color(0xFFFEE2E2),
-                fontSize = 16.sp,
+                fontSize = 15.sp,
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(40.dp))
 
             Button(
                 onClick = onSnoozeClicked,
                 colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(64.dp)
+                    .height(56.dp)
             ) {
                 Text(
                     text = "SNOOZE ($snoozeMinutes MIN)",
                     color = Color(0xFFB91C1C),
-                    fontSize = 18.sp,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedButton(
+                onClick = onDismissClicked,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp)
+            ) {
+                Icon(imageVector = Icons.Default.Lock, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "DISMISS ALARM (PIN)",
+                    color = Color.White,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
