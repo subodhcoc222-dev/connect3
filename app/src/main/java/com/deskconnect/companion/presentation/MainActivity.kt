@@ -20,29 +20,24 @@ class MainActivity : ComponentActivity() {
             DeskConnectTheme {
                 val uiState by viewModel.uiState.collectAsState()
                 var currentScreen by remember { mutableStateOf("DASHBOARD") }
-                var selectedDate by remember { mutableStateOf("") }
 
                 if (currentScreen == "DASHBOARD") {
                     MainDashboardScreen(
                         viewModel = viewModel,
                         onNavigateToEventLog = {
-                            if (uiState.availableDates.isNotEmpty()) {
-                                selectedDate = uiState.availableDates.first()
-                                viewModel.loadEventDatePayload(selectedDate)
-                            }
                             currentScreen = "EVENT_LOG"
                         }
                     )
                 } else {
                     EventLogScreen(
                         availableDates = uiState.availableDates,
-                        selectedDate = selectedDate,
-                        onDateSelected = { date ->
-                            selectedDate = date
-                            viewModel.loadEventDatePayload(date)
-                        },
                         dailyPayload = uiState.selectedDatePayload,
-                        onBackClicked = { currentScreen = "DASHBOARD" }
+                        onDateSelected = { dateStr ->
+                            viewModel.loadEventDatePayload(dateStr)
+                        },
+                        onBackToDashboard = {
+                            currentScreen = "DASHBOARD"
+                        }
                     )
                 }
             }
