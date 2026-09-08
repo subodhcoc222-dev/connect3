@@ -107,7 +107,6 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
                     lastRecordedHeartbeat = heartbeat
                     lastLocalHeartbeatUpdate = System.currentTimeMillis()
 
-                    // Connection restored: announce "Firebase connected"
                     if (isHeartbeatMissAlerted) {
                         isHeartbeatMissAlerted = false
                         heartbeatMissStartTime = 0L
@@ -126,7 +125,7 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
                 if (isAlarmActiveOnFirebase) {
                     evaluateAndTriggerAlarm(reason = "DESK_ALARM")
                 } else {
-                    // Camera phone detected user and turned alarm OFF -> Auto-dismiss overlay immediately!
+                    // Auto-dismiss: Camera detected person and turned off alarm
                     if (!isFailSafeAlarmTriggered) {
                         stopAlarm()
                     }
@@ -183,6 +182,7 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
     private fun evaluateAndTriggerAlarm(reason: String) {
         val quietSlots = prefs.getQuietSlots()
         if (QuietSlotChecker.isCurrentTimeInQuietSlot(quietSlots)) {
+            Log.d("DeskWatchdog", "Muted by Active Quiet Slot.")
             stopAlarm()
             return
         }
@@ -200,21 +200,20 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
 
     private fun handleSnooze() {
         isSnoozed = true
-        val snoozeMins = prefs.snoozeMinutes
-        snoozeEndTime = System.currentTimeMillis() + (snoozeMins * 60 * 1000L)
+        val snoozeSecs = prefs.snoozeSeconds
+        snoozeEndTime = System.currentTimeMillis() + (snoozeSecs * 1000L)
         stopAlarm()
     }
 
     private fun handleManualDismiss() {
         isSnoozed = true
-        snoozeEndTime = System.currentTimeMillis() + (5 * 60 * 1000L) // 5 mins emergency silence
+        snoozeEndTime = System.currentTimeMillis() + (5 * 60 * 1000L) // 5 mins silence buffer
         isFailSafeAlarmTriggered = false
         stopAlarm()
     }
 
     private fun stopAlarm() {
         audioPlayer.stop()
-        // Send broadcast to close the overlay screen automatically
         val dismissIntent = Intent(ACTION_DISMISS_OVERLAY).apply {
             setPackage(packageName)
         }
