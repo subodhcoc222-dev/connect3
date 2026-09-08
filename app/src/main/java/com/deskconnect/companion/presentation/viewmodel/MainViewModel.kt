@@ -4,12 +4,12 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import com.deskconnect.companion.data.local.PreferencesManager
 import com.deskconnect.companion.data.local.QuietSlot
 import com.deskconnect.companion.data.model.DailyEventPayload
-import com.deskconnect.companion.data.model.DeskSentryDevice
 import com.deskconnect.companion.receiver.AutoResumeReceiver
 import com.deskconnect.companion.service.DeskWatchdogService
 import com.google.firebase.database.*
@@ -25,7 +25,7 @@ data class DashboardUiState(
     val batteryLevel: Int = 0,
     val isCharging: Boolean = false,
     val lastHeartbeatMs: Long = 0L,
-    val isHeartbeatAlive: Boolean = true,
+    val isHeartbeatAlive: Boolean = false,
     val pauseUntilTimestamp: Long = 0L,
     val latestSnapshotBase64: String? = null,
     val latestSnapTime: Long = 0L,
@@ -46,9 +46,10 @@ class MainViewModel(private val context: Context) : ViewModel() {
 
     private var dbRef: DatabaseReference? = null
     private var dbListener: ValueEventListener? = null
-    private var currentLoadedDeviceData: DeskSentryDevice? = null
+    private val rawEventsMap = mutableMapOf<String, String>()
 
     companion object {
+        const val PAIRED_DEVICE_ID = "349806"
         const val FIREBASE_RTDB_URL = "https://desk-sentry-default-rtdb.firebaseio.com/"
     }
 
@@ -61,7 +62,7 @@ class MainViewModel(private val context: Context) : ViewModel() {
         _uiState.value = _uiState.value.copy(
             isMasterSwitchOn = prefs.isMasterSwitchOn,
             isPinSet = prefs.isPinSet(),
-            pairedDeviceId = prefs.pairedDeviceId.ifEmpty { "349806" },
+            pairedDeviceId = PAIRED_DEVICE_ID,
             snoozeMinutes = prefs.snoozeMinutes,
             pauseUntilTimestamp = prefs.pauseUntilTimestamp,
             quietSlots = prefs.getQuietSlots()
@@ -69,31 +70,61 @@ class MainViewModel(private val context: Context) : ViewModel() {
     }
 
     private fun initFirebase() {
-        val deviceId = prefs.pairedDeviceId.ifEmpty { "349806" }
-        val database = FirebaseDatabase.getInstance(FIREBASE_RTDB_URL)
-        dbRef = database.getReference("desk_sentry").child(deviceId)
+        try {
+            val database = FirebaseDatabase.getInstance(FIREBASE_RTDB_URL)
+            dbRef = database.getReference("desk_sentry").child(PAIRED_DEVICE_ID)
 
-        dbListener = object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                val data = snapshot.getValue(DeskSentryDevice::class.java) ?: return
-                currentLoadedDeviceData = data
+            dbListener = object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    if (!snapshot.exists()) {
+                        Log.e("DeskConnect", "Device node $PAIRED_DEVICE_ID does not exist!")
+                        return
+                    }
 
-                val isAlive = (System.currentTimeMillis() - data.lastHeartbeat) < 15_000L
+                    // Direct safe field parsing (bypasses reflection issues)
+                    val battery = snapshot.child("battery_level").getValue(Long::class.java)?.toInt()
+                        ?: snapshot.child("battery_level").getValue(Int::class.java) ?: 0
 
-                _uiState.value = _uiState.value.copy(
-                    batteryLevel = data.batteryLevel,
-                    isCharging = data.isCharging,
-                    lastHeartbeatMs = data.lastHeartbeat,
-                    isHeartbeatAlive = isAlive,
-                    latestSnapshotBase64 = data.latestSnapshotBase64,
-                    latestSnapTime = data.latestSnapTime,
-                    availableDates = data.availableDates
-                )
+                    val charging = snapshot.child("is_charging").getValue(Boolean::class.java) ?: false
+                    val heartbeat = snapshot.child("last_heartbeat").getValue(Long::class.java) ?: 0L
+                    val snapBase64 = snapshot.child("latest_snapshot_base64").getValue(String::class.java)
+                    val snapTime = snapshot.child("latest_snap_time").getValue(Long::class.java) ?: 0L
+
+                    // Parse available dates list
+                    val dates = mutableListOf<String>()
+                    snapshot.child("available_dates").children.forEach { child ->
+                        child.getValue(String::class.java)?.let { dates.add(it) }
+                    }
+
+                    // Cache stringified event logs
+                    rawEventsMap.clear()
+                    snapshot.child("events").children.forEach { child ->
+                        val dateKey = child.key ?: return@forEach
+                        val jsonStr = child.getValue(String::class.java) ?: return@forEach
+                        rawEventsMap[dateKey] = jsonStr
+                    }
+
+                    val isAlive = (System.currentTimeMillis() - heartbeat) < 60_000L
+
+                    _uiState.value = _uiState.value.copy(
+                        batteryLevel = battery,
+                        isCharging = charging,
+                        lastHeartbeatMs = heartbeat,
+                        isHeartbeatAlive = isAlive,
+                        latestSnapshotBase64 = snapBase64,
+                        latestSnapTime = snapTime,
+                        availableDates = dates
+                    )
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    Log.e("DeskConnect", "Firebase read error: ${error.message}")
+                }
             }
-
-            override fun onCancelled(error: DatabaseError) {}
+            dbRef?.addValueEventListener(dbListener!!)
+        } catch (e: Exception) {
+            Log.e("DeskConnect", "Failed to connect to Firebase", e)
         }
-        dbRef?.addValueEventListener(dbListener!!)
     }
 
     fun toggleMasterSwitch(turnOn: Boolean) {
@@ -153,7 +184,7 @@ class MainViewModel(private val context: Context) : ViewModel() {
     }
 
     fun loadEventDatePayload(date: String) {
-        val rawJson = currentLoadedDeviceData?.events?.get(date) ?: return
+        val rawJson = rawEventsMap[date] ?: return
         try {
             val payload = gson.fromJson(rawJson, DailyEventPayload::class.java)
             _uiState.value = _uiState.value.copy(selectedDatePayload = payload)
