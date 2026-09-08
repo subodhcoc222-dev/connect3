@@ -58,10 +58,11 @@ class AlarmOverlayActivity : ComponentActivity() {
 
         setContent {
             var showPinDialog by remember { mutableStateOf(false) }
+            val snoozeLabel = formatSnoozeLabel(prefs.snoozeSeconds)
 
             AlarmOverlayScreen(
                 reason = reason,
-                snoozeMinutes = prefs.snoozeMinutes,
+                snoozeLabel = snoozeLabel,
                 onSnoozeClicked = { triggerSnooze() },
                 onDismissClicked = { showPinDialog = true }
             )
@@ -114,6 +115,10 @@ class AlarmOverlayActivity : ComponentActivity() {
         finish()
     }
 
+    private fun formatSnoozeLabel(secs: Int): String {
+        return if (secs < 60) "${secs}S" else "${secs / 60}M"
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         try {
@@ -122,15 +127,13 @@ class AlarmOverlayActivity : ComponentActivity() {
     }
 
     @Deprecated("Prevent accidental back dismiss")
-    override fun onBackPressed() {
-        // Disabled to prevent unauthorized dismissal
-    }
+    override fun onBackPressed() {}
 }
 
 @Composable
 fun AlarmOverlayScreen(
     reason: String,
-    snoozeMinutes: Int,
+    snoozeLabel: String,
     onSnoozeClicked: () -> Unit,
     onDismissClicked: () -> Unit
 ) {
@@ -198,7 +201,7 @@ fun AlarmOverlayScreen(
                     .height(56.dp)
             ) {
                 Text(
-                    text = "SNOOZE ($snoozeMinutes MIN)",
+                    text = "SNOOZE ($snoozeLabel)",
                     color = Color(0xFFB91C1C),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
