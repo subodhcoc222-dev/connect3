@@ -45,6 +45,8 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_START_WATCHDOG = "action_start_watchdog"
         const val ACTION_STOP_WATCHDOG = "action_stop_watchdog"
         const val ACTION_SNOOZE_ALARM = "action_snooze_alarm"
+        const val ACTION_MANUAL_DISMISS_ALARM = "action_manual_dismiss_alarm"
+        const val ACTION_DISMISS_OVERLAY = "com.deskconnect.companion.ACTION_DISMISS_OVERLAY"
         const val NOTIFICATION_ID = 1001
         const val HEARTBEAT_TIMEOUT_MS = 15_000L
         const val GRACE_PERIOD_MS = 120_000L
@@ -69,6 +71,9 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
             }
             ACTION_SNOOZE_ALARM -> {
                 handleSnooze()
+            }
+            ACTION_MANUAL_DISMISS_ALARM -> {
+                handleManualDismiss()
             }
             else -> {
                 startForeground(NOTIFICATION_ID, buildForegroundNotification("Monitoring DeskConnect..."))
@@ -102,9 +107,13 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
                     lastRecordedHeartbeat = heartbeat
                     lastLocalHeartbeatUpdate = System.currentTimeMillis()
 
+                    // Connection restored: announce "Firebase connected"
                     if (isHeartbeatMissAlerted) {
                         isHeartbeatMissAlerted = false
                         heartbeatMissStartTime = 0L
+                        if (!QuietSlotChecker.isCurrentTimeInQuietSlot(prefs.getQuietSlots())) {
+                            speakTtsAlert("Firebase connected.")
+                        }
                         if (isFailSafeAlarmTriggered) {
                             isFailSafeAlarmTriggered = false
                             stopAlarm()
@@ -117,6 +126,7 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
                 if (isAlarmActiveOnFirebase) {
                     evaluateAndTriggerAlarm(reason = "DESK_ALARM")
                 } else {
+                    // Camera phone detected user and turned alarm OFF -> Auto-dismiss overlay immediately!
                     if (!isFailSafeAlarmTriggered) {
                         stopAlarm()
                     }
@@ -154,7 +164,6 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
                         if (!isHeartbeatMissAlerted) {
                             isHeartbeatMissAlerted = true
                             heartbeatMissStartTime = now
-                            // Silent slot check before speaking TTS
                             if (!QuietSlotChecker.isCurrentTimeInQuietSlot(prefs.getQuietSlots())) {
                                 speakTtsAlert("Firebase disconnected. Please connect to Firebase.")
                             }
@@ -174,7 +183,6 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
     private fun evaluateAndTriggerAlarm(reason: String) {
         val quietSlots = prefs.getQuietSlots()
         if (QuietSlotChecker.isCurrentTimeInQuietSlot(quietSlots)) {
-            Log.d("DeskWatchdog", "Muted by Active Quiet Slot.")
             stopAlarm()
             return
         }
@@ -197,8 +205,20 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
         stopAlarm()
     }
 
+    private fun handleManualDismiss() {
+        isSnoozed = true
+        snoozeEndTime = System.currentTimeMillis() + (5 * 60 * 1000L) // 5 mins emergency silence
+        isFailSafeAlarmTriggered = false
+        stopAlarm()
+    }
+
     private fun stopAlarm() {
         audioPlayer.stop()
+        // Send broadcast to close the overlay screen automatically
+        val dismissIntent = Intent(ACTION_DISMISS_OVERLAY).apply {
+            setPackage(packageName)
+        }
+        sendBroadcast(dismissIntent)
     }
 
     private fun speakTtsAlert(message: String) {
@@ -228,11 +248,18 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
             PendingIntent.FLAG_IMMUTABLE
         )
 
+        val dismissPendingIntent = PendingIntent.getService(
+            this, 1,
+            Intent(this, DeskWatchdogService::class.java).apply { action = ACTION_MANUAL_DISMISS_ALARM },
+            PendingIntent.FLAG_IMMUTABLE
+        )
+
         return NotificationCompat.Builder(this, DeskConnectApp.CHANNEL_WATCHDOG_SERVICE)
             .setContentTitle("DeskConnect Companion Running")
             .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_shield)
             .setContentIntent(pendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Alarm", dismissPendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
