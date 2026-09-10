@@ -3,6 +3,7 @@ package com.deskconnect.companion.presentation
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -47,6 +49,18 @@ fun MainDashboardScreen(
     var showSnapshotFullscreen by remember { mutableStateOf(false) }
     var slotToEdit by remember { mutableStateOf<QuietSlot?>(null) }
 
+    // Smooth spin animation for Hard Refresh button
+    val infiniteTransition = rememberInfiniteTransition(label = "refreshSpin")
+    val spinAngle by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(700, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "spinAngle"
+    )
+
     LaunchedEffect(uiState.isPinSet) {
         if (!uiState.isPinSet) {
             pinMode = PinMode.SETUP_NEW
@@ -66,6 +80,20 @@ fun MainDashboardScreen(
                     }
                 },
                 actions = {
+                    // HARD REFRESH BUTTON
+                    IconButton(
+                        onClick = { viewModel.hardRefresh() },
+                        enabled = !uiState.isRefreshing
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Hard Refresh",
+                            tint = CyanAccent,
+                            modifier = Modifier.rotate(if (uiState.isRefreshing) spinAngle else 0f)
+                        )
+                    }
+
+                    // PIN SETTINGS BUTTON
                     IconButton(onClick = {
                         pinMode = PinMode.CHANGE_PIN
                         onPinSuccessAction = { viewModel.loadLocalSettings() }
@@ -102,10 +130,12 @@ fun MainDashboardScreen(
                 PausedBanner(pauseTimestamp = uiState.pauseUntilTimestamp)
             }
 
+            // Live Telemetry with Heartbeat Age (Latency)
             LiveTelemetryCard(
                 batteryLevel = uiState.batteryLevel,
                 isCharging = uiState.isCharging,
-                isHeartbeatAlive = uiState.isHeartbeatAlive
+                isHeartbeatAlive = uiState.isHeartbeatAlive,
+                heartbeatAgeSec = uiState.heartbeatAgeSec
             )
 
             InlineSnapshotCard(
@@ -126,7 +156,6 @@ fun MainDashboardScreen(
 
             EventLogNavCard(onClick = onNavigateToEventLog)
 
-            // Snooze Configuration Card with 30s option
             SnoozeConfigCard(
                 currentSeconds = uiState.snoozeSeconds,
                 onSelectSeconds = { secs ->
@@ -189,6 +218,71 @@ fun MainDashboardScreen(
             snapTimeMs = uiState.latestSnapTime,
             onDismiss = { showSnapshotFullscreen = false }
         )
+    }
+}
+
+@Composable
+fun LiveTelemetryCard(
+    batteryLevel: Int,
+    isCharging: Boolean,
+    isHeartbeatAlive: Boolean,
+    heartbeatAgeSec: Long
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SlateSurface),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth().border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(text = "CAMERA TELEMETRY", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                // Battery section
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (isCharging) Icons.Default.BatteryChargingFull else Icons.Default.BatteryFull,
+                        contentDescription = null,
+                        tint = if (batteryLevel > 20) EmeraldPresent else CrimsonAbsent,
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(text = "$batteryLevel%", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text(text = if (isCharging) "Charging (Plugged)" else "On Battery", color = TextMuted, fontSize = 11.sp)
+                    }
+                }
+
+                // Heartbeat & Live Latency section
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clip(CircleShape)
+                            .background(if (isHeartbeatAlive) EmeraldPresent else CrimsonAbsent)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = if (isHeartbeatAlive) "ONLINE" else "DISCONNECTED",
+                            color = if (isHeartbeatAlive) EmeraldPresent else CrimsonAbsent,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        val latencyLabel = when {
+                            heartbeatAgeSec < 0 -> "Syncing..."
+                            heartbeatAgeSec == 0L -> "Just now"
+                            else -> "${heartbeatAgeSec}s ago"
+                        }
+                        Text(
+                            text = "Heartbeat: $latencyLabel",
+                            color = if (isHeartbeatAlive) CyanAccent else TextMuted,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -284,54 +378,6 @@ fun InlineSnapshotCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(text = "No snapshot recorded yet. Tap 'Request Snap'", color = TextMuted, fontSize = 12.sp)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun LiveTelemetryCard(batteryLevel: Int, isCharging: Boolean, isHeartbeatAlive: Boolean) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = SlateSurface),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth().border(1.dp, SlateBorder, RoundedCornerShape(16.dp))
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = "CAMERA TELEMETRY", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = if (isCharging) Icons.Default.BatteryChargingFull else Icons.Default.BatteryFull,
-                        contentDescription = null,
-                        tint = if (batteryLevel > 20) EmeraldPresent else CrimsonAbsent,
-                        modifier = Modifier.size(32.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column {
-                        Text(text = "$batteryLevel%", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        Text(text = if (isCharging) "Charging (Plugged)" else "On Battery", color = TextMuted, fontSize = 11.sp)
-                    }
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(14.dp)
-                            .clip(CircleShape)
-                            .background(if (isHeartbeatAlive) EmeraldPresent else CrimsonAbsent)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column {
-                        Text(
-                            text = if (isHeartbeatAlive) "ONLINE" else "DISCONNECTED",
-                            color = if (isHeartbeatAlive) EmeraldPresent else CrimsonAbsent,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(text = if (isHeartbeatAlive) "Heartbeat Active" else "Heartbeat Lost", color = TextMuted, fontSize = 11.sp)
-                    }
                 }
             }
         }
