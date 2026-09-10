@@ -15,6 +15,7 @@ import com.deskconnect.companion.receiver.AutoResumeReceiver
 import com.deskconnect.companion.service.DeskWatchdogService
 import com.google.firebase.database.*
 import com.google.gson.Gson
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,6 +31,8 @@ data class DashboardUiState(
     val isCharging: Boolean = false,
     val lastHeartbeatMs: Long = 0L,
     val isHeartbeatAlive: Boolean = false,
+    val heartbeatAgeSec: Long = -1L,
+    val isRefreshing: Boolean = false,
     val pauseUntilTimestamp: Long = 0L,
     val latestSnapshotBase64: String? = null,
     val latestSnapTime: Long = 0L,
@@ -104,12 +107,15 @@ class MainViewModel(private val context: Context) : ViewModel() {
                         rawEventsMap[dateKey] = jsonStr
                     }
 
-                    val isAlive = (System.currentTimeMillis() - heartbeat) < HEARTBEAT_TIMEOUT_MS
+                    val now = System.currentTimeMillis()
+                    val ageSec = if (heartbeat > 0L) ((now - heartbeat) / 1000L).coerceAtLeast(0L) else -1L
+                    val isAlive = (ageSec in 0..14)
 
                     _uiState.value = _uiState.value.copy(
                         batteryLevel = battery,
                         isCharging = charging,
                         lastHeartbeatMs = heartbeat,
+                        heartbeatAgeSec = ageSec,
                         isHeartbeatAlive = isAlive,
                         latestSnapshotBase64 = snapBase64,
                         latestSnapTime = snapTime,
@@ -127,16 +133,64 @@ class MainViewModel(private val context: Context) : ViewModel() {
         }
     }
 
+    // 1-Second active ticker: calculates second-by-second heartbeat latency
     private fun startLiveStatusTicker() {
         viewModelScope.launch {
             while (isActive) {
                 delay(1000L)
-                val currentHeartbeat = _uiState.value.lastHeartbeatMs
-                val isAliveNow = currentHeartbeat > 0L && (System.currentTimeMillis() - currentHeartbeat < HEARTBEAT_TIMEOUT_MS)
-                if (_uiState.value.isHeartbeatAlive != isAliveNow) {
-                    _uiState.value = _uiState.value.copy(isHeartbeatAlive = isAliveNow)
-                }
+                val now = System.currentTimeMillis()
+                val hb = _uiState.value.lastHeartbeatMs
+                val ageSec = if (hb > 0L) ((now - hb) / 1000L).coerceAtLeast(0L) else -1L
+                val isAliveNow = (ageSec in 0..14)
+
+                _uiState.value = _uiState.value.copy(
+                    heartbeatAgeSec = ageSec,
+                    isHeartbeatAlive = isAliveNow
+                )
             }
+        }
+    }
+
+    // Manual Hard Refresh Button Action
+    fun hardRefresh() {
+        if (_uiState.value.isRefreshing) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.value = _uiState.value.copy(isRefreshing = true)
+            try {
+                val database = FirebaseDatabase.getInstance(FIREBASE_RTDB_URL)
+                database.goOffline()
+                delay(300L)
+                database.goOnline()
+
+                // Direct bypass of local cache
+                dbRef?.get()?.addOnSuccessListener { snapshot ->
+                    if (snapshot.exists()) {
+                        val battery = snapshot.child("battery_level").getValue(Long::class.java)?.toInt()
+                            ?: snapshot.child("battery_level").getValue(Int::class.java) ?: 0
+                        val charging = snapshot.child("is_charging").getValue(Boolean::class.java) ?: false
+                        val heartbeat = snapshot.child("last_heartbeat").getValue(Long::class.java) ?: 0L
+                        val snapBase64 = snapshot.child("latest_snapshot_base64").getValue(String::class.java)
+                        val snapTime = snapshot.child("latest_snap_time").getValue(Long::class.java) ?: 0L
+
+                        val now = System.currentTimeMillis()
+                        val ageSec = if (heartbeat > 0L) ((now - heartbeat) / 1000L).coerceAtLeast(0L) else -1L
+
+                        _uiState.value = _uiState.value.copy(
+                            batteryLevel = battery,
+                            isCharging = charging,
+                            lastHeartbeatMs = heartbeat,
+                            heartbeatAgeSec = ageSec,
+                            isHeartbeatAlive = (ageSec in 0..14),
+                            latestSnapshotBase64 = snapBase64,
+                            latestSnapTime = snapTime
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("DeskConnect", "Hard refresh failed", e)
+            }
+            delay(700L)
+            _uiState.value = _uiState.value.copy(isRefreshing = false)
         }
     }
 
