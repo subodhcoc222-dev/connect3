@@ -36,6 +36,10 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
     private var isHeartbeatMissAlerted = false
     private var heartbeatMissStartTime: Long = 0L
 
+    // Self-healing timers
+    private var lastSelfHealingResetTime: Long = 0L
+    private var lastPreventivePulseTime: Long = 0L
+
     private var isAlarmActiveOnFirebase = false
     private var isFailSafeAlarmTriggered = false
     private var isSnoozed = false
@@ -50,6 +54,7 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
         const val NOTIFICATION_ID = 1001
         const val HEARTBEAT_TIMEOUT_MS = 15_000L
         const val GRACE_PERIOD_MS = 120_000L
+        const val PREVENTIVE_PULSE_INTERVAL_MS = 900_000L // 15 minutes
         const val PAIRED_DEVICE_ID = "349806"
         const val FIREBASE_RTDB_URL = "https://desk-sentry-default-rtdb.firebaseio.com/"
     }
@@ -59,6 +64,7 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
         prefs = PreferencesManager(this)
         audioPlayer = AlarmAudioPlayer(this)
         tts = TextToSpeech(this, this)
+        lastPreventivePulseTime = System.currentTimeMillis()
         acquireWakeLock()
     }
 
@@ -76,7 +82,7 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
                 handleManualDismiss()
             }
             else -> {
-                startForeground(NOTIFICATION_ID, buildForegroundNotification("Monitoring DeskConnect..."))
+                startForeground(NOTIFICATION_ID, buildForegroundNotification("Monitoring DeskConnect (24/7 Active)..."))
                 startWatchdog()
             }
         }
@@ -125,7 +131,6 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
                 if (isAlarmActiveOnFirebase) {
                     evaluateAndTriggerAlarm(reason = "DESK_ALARM")
                 } else {
-                    // Auto-dismiss: Camera detected person and turned off alarm
                     if (!isFailSafeAlarmTriggered) {
                         stopAlarm()
                     }
@@ -150,6 +155,7 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
                     break
                 }
 
+                // Snooze countdown
                 if (isSnoozed && now >= snoozeEndTime) {
                     isSnoozed = false
                     if (isAlarmActiveOnFirebase || isFailSafeAlarmTriggered) {
@@ -157,9 +163,23 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
 
+                // 15-Minute silent preventive refresh
+                if (now - lastPreventivePulseTime >= PREVENTIVE_PULSE_INTERVAL_MS) {
+                    lastPreventivePulseTime = now
+                    performSilentSocketReset()
+                }
+
+                // Heartbeat loss detection & Self-Healing trigger
                 if (lastLocalHeartbeatUpdate > 0L) {
                     val diff = now - lastLocalHeartbeatUpdate
                     if (diff > HEARTBEAT_TIMEOUT_MS) {
+                        // Autonomous Self-Healing: Reset socket every 25s if heartbeat stalled
+                        if (now - lastSelfHealingResetTime >= 25_000L) {
+                            lastSelfHealingResetTime = now
+                            Log.d("DeskWatchdog", "Auto-recovering stalled socket...")
+                            performSilentSocketReset()
+                        }
+
                         if (!isHeartbeatMissAlerted) {
                             isHeartbeatMissAlerted = true
                             heartbeatMissStartTime = now
@@ -179,10 +199,20 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun performSilentSocketReset() {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val db = FirebaseDatabase.getInstance(FIREBASE_RTDB_URL)
+                db.goOffline()
+                delay(300L)
+                db.goOnline()
+            } catch (_: Exception) {}
+        }
+    }
+
     private fun evaluateAndTriggerAlarm(reason: String) {
         val quietSlots = prefs.getQuietSlots()
         if (QuietSlotChecker.isCurrentTimeInQuietSlot(quietSlots)) {
-            Log.d("DeskWatchdog", "Muted by Active Quiet Slot.")
             stopAlarm()
             return
         }
@@ -207,7 +237,7 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
 
     private fun handleManualDismiss() {
         isSnoozed = true
-        snoozeEndTime = System.currentTimeMillis() + (5 * 60 * 1000L) // 5 mins silence buffer
+        snoozeEndTime = System.currentTimeMillis() + (5 * 60 * 1000L)
         isFailSafeAlarmTriggered = false
         stopAlarm()
     }
@@ -254,7 +284,7 @@ class DeskWatchdogService : Service(), TextToSpeech.OnInitListener {
         )
 
         return NotificationCompat.Builder(this, DeskConnectApp.CHANNEL_WATCHDOG_SERVICE)
-            .setContentTitle("DeskConnect Companion Running")
+            .setContentTitle("DeskConnect Companion Active")
             .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_shield)
             .setContentIntent(pendingIntent)
